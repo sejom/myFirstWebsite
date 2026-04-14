@@ -134,3 +134,155 @@
         ctx.beginPath();
         const [sx, sy] = getCoord(ring[0]);
         ctx.moveTo(sx, sy);
+        for (let i = 1; i < ring.length; i++) {
+          const [x, y] = getCoord(ring[i]);
+          ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.stroke();
+      });
+
+      [[1,4],[4,7],[9,10],[10,11],[12,13],[13,14],[16,19],[19,22]].forEach(([a,b]) => {
+        const [x1,y1] = getCoord(a);
+        const [x2,y2] = getCoord(b);
+        ctx.beginPath();
+        ctx.moveTo(x1,y1);
+        ctx.lineTo(x2,y2);
+        ctx.stroke();
+      });
+
+      if (!gameState) return;
+
+      POINTS.forEach((_, idx) => {
+        const [x, y] = getCoord(idx);
+        const piece = gameState.board[idx];
+
+        if (selectedPoint === idx) {
+          ctx.beginPath();
+          ctx.arc(x, y, 18, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(255,255,0,0.5)';
+          ctx.fill();
+        }
+
+        ctx.beginPath();
+        ctx.arc(x, y, 14, 0, Math.PI * 2);
+        if (piece === '1') {
+          ctx.fillStyle = '#333';
+        } else if (piece === '2') {
+          ctx.fillStyle = '#fff';
+          ctx.strokeStyle = '#333';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        } else {
+          ctx.fillStyle = '#c8a96e';
+        }
+        ctx.fill();
+      });
+    }
+
+    function handleClick(e) {
+      if (!gameState || gameState.currentPlayer !== myPlayer) return;
+      const rect = canvas.getBoundingClientRect();
+      const mx = (e.clientX - rect.left) * (480 / rect.width);
+      const my = (e.clientY - rect.top) * (480 / rect.height);
+
+      let clicked = -1;
+      POINTS.forEach((_, idx) => {
+        const [x, y] = getCoord(idx);
+        if (Math.hypot(mx - x, my - y) < 20) clicked = idx;
+      });
+
+      if (clicked === -1) return;
+
+      if (gameState.phase === 'place') {
+        if (gameState.board[clicked] === '') {
+          socket.emit('morrisMove', { roomCode: currentRoom, type: 'place', to: clicked });
+        }
+      } else if (gameState.phase === 'move' || gameState.phase === 'fly') {
+        if (selectedPoint === null) {
+          if (gameState.board[clicked] === myPlayer) selectedPoint = clicked;
+        } else {
+          if (clicked === selectedPoint) {
+            selectedPoint = null;
+          } else if (gameState.board[clicked] === '') {
+            socket.emit('morrisMove', { roomCode: currentRoom, type: 'move', from: selectedPoint, to: clicked });
+            selectedPoint = null;
+          } else if (gameState.board[clicked] === myPlayer) {
+            selectedPoint = clicked;
+          }
+        }
+      } else if (gameState.phase === 'remove') {
+        if (gameState.board[clicked] !== '' && gameState.board[clicked] !== myPlayer) {
+          socket.emit('morrisMove', { roomCode: currentRoom, type: 'remove', from: clicked });
+        }
+      }
+      drawBoard();
+    }
+
+    canvas.addEventListener('click', handleClick);
+
+    function createRoom() {
+      const roomCode = Math.random().toString(36).substring(2, 7).toUpperCase();
+      currentRoom = roomCode;
+      myPlayer = '1';
+      socket.emit('createMorrisRoom', roomCode);
+    }
+
+    function joinRoom() {
+      const roomCode = document.getElementById('roomInput').value.toUpperCase();
+      currentRoom = roomCode;
+      myPlayer = '2';
+      socket.emit('joinMorrisRoom', roomCode);
+    }
+
+    socket.on('morrisRoomCreated', (roomCode) => {
+      document.getElementById('status').textContent = `Room created! Share this code: ${roomCode}`;
+    });
+
+    socket.on('morrisRoomJoined', (roomCode) => {
+      document.getElementById('status').textContent = `Joined room ${roomCode}. Waiting...`;
+    });
+
+    socket.on('morrisStart', (state) => {
+      gameState = state;
+      document.getElementById('lobby').style.display = 'none';
+      document.getElementById('game').style.display = 'flex';
+      updateStatus();
+      drawBoard();
+    });
+
+    socket.on('morrisUpdate', (state) => {
+      gameState = state;
+      selectedPoint = null;
+      updateStatus();
+      drawBoard();
+    });
+
+    socket.on('morrisGameOver', ({ winner }) => {
+      if (winner === myPlayer) {
+        document.getElementById('status').textContent = 'You win!';
+      } else {
+        document.getElementById('status').textContent = 'You lose!';
+      }
+      document.getElementById('restart').style.display = 'block';
+    });
+
+    function updateStatus() {
+      const myTurn = gameState.currentPlayer === myPlayer;
+      const phaseMap = { place: 'Placing pieces', move: 'Moving pieces', fly: 'Flying phase', remove: 'Remove an opponent piece' };
+      document.getElementById('phase-info').textContent = phaseMap[gameState.phase] || '';
+      if (gameState.phase === 'remove') {
+        document.getElementById('status').textContent = myTurn ? 'You formed a mill! Remove an opponent piece.' : "Opponent formed a mill — they're removing a piece.";
+      } else {
+        document.getElementById('status').textContent = myTurn ? 'Your turn!' : "Opponent's turn";
+      }
+    }
+
+    socket.on('error', (msg) => {
+      document.getElementById('status').textContent = `Error: ${msg}`;
+    });
+
+    drawBoard();
+  </script>
+</body>
+</html>
